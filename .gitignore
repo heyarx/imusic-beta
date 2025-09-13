@@ -1,0 +1,27 @@
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Downloads & cookies
+downloads/
+cookies.txt
+users.json
+
+# Logs & temporary files
+*.log
+*.tmp
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Favicon
+favicon.ico
