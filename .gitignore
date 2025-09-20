@@ -1,4 +1,4 @@
-# Python bytecode
+# Python cache
 __pycache__/
 *.py[cod]
 *.pyo
@@ -10,25 +10,19 @@ __pycache__/
 env/
 venv/
 
-# Project directories
+# Downloads and cache
 downloads/
 cache/
-cookies/*.txt
-
-# User data / state
 users.json
 
 # Logs and temp files
 *.log
 *.tmp
 
-# OS-specific files
+# OS files
 .DS_Store
 Thumbs.db
 favicon.ico
 
-# IDE/editor settings
-.vscode/
-.idea/
-*.sublime-project
-*.sublime-workspace
+# Cookies
+cookies.txt
