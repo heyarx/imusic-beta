@@ -1,17 +1,6 @@
-# Telegram bot framework
 python-telegram-bot==20.5
-
-# FastAPI for webhook and API
-fastapi>=0.109.2,<0.117
-
-# ASGI server
+fastapi>=0.109.2
 uvicorn>=0.23.2
-
-# YouTube downloader
 yt-dlp>=2025.8.1
-
-# HTTP requests
 requests>=2.31.0
-
-# Audio metadata editing
 mutagen>=1.46.0

@@ -1,4 +1,4 @@
-# Python cache & compiled files
+# Python bytecode
 __pycache__/
 *.py[cod]
 *.pyo
@@ -10,26 +10,25 @@ __pycache__/
 env/
 venv/
 
-# Bot media & cache
+# Project directories
 downloads/
 cache/
+cookies/*.txt
+
+# User data / state
 users.json
 
-# Logs and temporary files
+# Logs and temp files
 *.log
 *.tmp
 
-# OS files
+# OS-specific files
 .DS_Store
 Thumbs.db
 favicon.ico
 
-# Cookies
-cookies/*.txt
-
-# Environment / secret files
-.env
-
-# Editor settings (optional)
+# IDE/editor settings
 .vscode/
 .idea/
+*.sublime-project
+*.sublime-workspace

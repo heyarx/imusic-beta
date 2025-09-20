@@ -9,16 +9,10 @@ from mutagen.id3 import ID3, APIC
 import datetime
 import logging
 from contextlib import asynccontextmanager
-import re
 
 from fastapi import FastAPI, Request
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
-)
-from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler, ContextTypes,
-    MessageHandler, filters
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,10 +24,16 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://imusic-beta.onrender.com/webhook
 DOWNLOAD_DIR = Path("downloads")
 CACHE_DIR = Path("cache")
 USERS_FILE = Path("users.json")
+COOKIES_FOLDER = Path("cookies")
+COOKIE_STATE = Path("cookie_state.json")
+
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 CACHE_DIR.mkdir(exist_ok=True)
+COOKIES_FOLDER.mkdir(exist_ok=True)
 if not USERS_FILE.exists():
     USERS_FILE.write_text(json.dumps({}))
+if not COOKIE_STATE.exists():
+    COOKIE_STATE.write_text(json.dumps({"index": 0}))
 
 # ---------------- LANGUAGES ----------------
 LANGUAGES = {
@@ -45,10 +45,10 @@ LANGUAGES = {
 }
 
 # ---------------- USER STATE ----------------
-def load_users(): 
+def load_users():
     return json.loads(USERS_FILE.read_text() or "{}")
 
-def save_users(data): 
+def save_users(data):
     USERS_FILE.write_text(json.dumps(data, indent=2))
 
 def register_user(user_id, first_name=None):
@@ -65,15 +65,10 @@ def set_user_language(user_id, lang_code):
     users[str(user_id)] = u
     save_users(users)
 
-def get_user_pref(user_id): 
+def get_user_pref(user_id):
     return load_users().get(str(user_id), {})
 
 # ---------------- COOKIE ROTATION ----------------
-COOKIE_STATE = Path("cookie_state.json")
-COOKIES_FOLDER = Path("cookies")
-if not COOKIE_STATE.exists():
-    COOKIE_STATE.write_text(json.dumps({"index": 0}))
-
 def get_current_cookie():
     cookies = sorted(COOKIES_FOLDER.glob("cookies*.txt"))
     if not cookies:
@@ -84,7 +79,7 @@ def get_current_cookie():
 
 def rotate_cookie():
     cookies = sorted(COOKIES_FOLDER.glob("cookies*.txt"))
-    if not cookies: 
+    if not cookies:
         return None
     state = json.loads(COOKIE_STATE.read_text())
     idx = (state.get("index", 0) + 1) % len(cookies)
@@ -95,12 +90,13 @@ def rotate_cookie():
 # ---------------- KEYBOARDS ----------------
 def language_keyboard():
     kb, row = [], []
-    for idx, (code, name) in enumerate(LANGUAGES.items(),1):
+    for idx, (code, name) in enumerate(LANGUAGES.items(), 1):
         row.append(InlineKeyboardButton(name, callback_data=f"lang_{code}"))
-        if idx % 3 == 0: 
+        if idx % 3 == 0:
             kb.append(row)
-            row=[]
-    if row: kb.append(row)
+            row = []
+    if row:
+        kb.append(row)
     return InlineKeyboardMarkup(kb)
 
 def post_download_keyboard():
@@ -119,7 +115,6 @@ async def lifespan(app: FastAPI):
     await application.initialize()
     await application.start()
 
-    # Set bot commands
     async def set_commands(app):
         commands = [
             BotCommand("start", "Start the bot & choose language"),
@@ -127,12 +122,10 @@ async def lifespan(app: FastAPI):
             BotCommand("about", "Info about iMusic Beta")
         ]
         await app.bot.set_my_commands(commands)
-    asyncio.create_task(set_commands(application))
 
-    # Start 30-minute periodic song prompt
+    asyncio.create_task(set_commands(application))
     asyncio.create_task(song_reminder())
 
-    # Webhook setup
     try:
         await application.bot.set_webhook(WEBHOOK_URL)
         print(f"✅ Webhook set to {WEBHOOK_URL}")
@@ -148,7 +141,7 @@ app = FastAPI(lifespan=lifespan)
 # ---------------- REMINDER ----------------
 async def song_reminder():
     while True:
-        await asyncio.sleep(1800)  # 30 minutes
+        await asyncio.sleep(1800)  # 30 min
         for uid, data in load_users().items():
             try:
                 msg = await application.bot.send_message(
@@ -196,63 +189,46 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("🎶 iMusic Beta v1.0\nCreated by @hey_arnab02")
 
 # ---------------- SONG SEARCH ----------------
-def sanitize_filename(name):
-    return re.sub(r'[\\/*?:"<>|]', "", name)
-
 async def search_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = update.effective_user
     register_user(user.id, user.first_name)
     pref = get_user_pref(user.id)
-    lang = pref.get("language", "en")
-
     song_name = update.message.text.strip()
-    status_msg = await update.message.reply_text("🎵 Downloading your song...")
+    status_msg = await update.message.reply_text("Downloading 🎵")
 
     cookie_file = get_current_cookie()
     attempt = 0
-    entry = None
-
     while attempt < 3:
         try:
             ydl_opts = {
-                "format": "bestaudio/best",
+                "format":"bestaudio/best",
                 "outtmpl": str(CACHE_DIR / "%(title)s.%(ext)s"),
                 "noplaylist": True,
                 "cookiefile": str(cookie_file) if cookie_file else None,
-                "postprocessors": [{"key":"FFmpegExtractAudio","preferredcodec":"mp3","preferredquality":"192"}],
-                "quiet": True,
-                "no_warnings": True,
-                "ignoreerrors": True
+                "postprocessors":[{"key":"FFmpegExtractAudio","preferredcodec":"mp3","preferredquality":"192"}],
+                "quiet": True, "no_warnings": True
             }
-
             def download():
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     return ydl.extract_info(f"ytsearch:{song_name}", download=True)
 
             info = await asyncio.to_thread(download)
-            if info and info.get("entries"):
-                entry = info["entries"][0]
-                if entry:
-                    logger.info(f"Download success: {entry['title']}")
-                    break
-            raise Exception("No valid entries found")
-
+            entry = info["entries"][0]
+            break
         except Exception as e:
-            logger.error(f"Download attempt {attempt+1} failed: {e}")
+            logger.error(f"Download error attempt {attempt+1}: {e}")
             attempt += 1
             cookie_file = rotate_cookie()
-
-    if not entry:
-        await status_msg.edit_text("❌ Could not fetch the song after multiple attempts.")
+    else:
+        await status_msg.edit_text("❌ Could not fetch the song after rotating cookies.")
         return
 
-    file_path = CACHE_DIR / f"{sanitize_filename(entry['title'])}.mp3"
+    file_path = CACHE_DIR / f"{entry['title']}.mp3"
     if not file_path.exists():
-        await status_msg.edit_text("❌ Download failed due to file error.")
+        await status_msg.edit_text("❌ Download failed.")
         return
 
-    # Metadata & album art
     try:
         audio = EasyID3(str(file_path))
         audio["title"] = entry.get("title", song_name)
@@ -263,12 +239,12 @@ async def search_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
             audio_id3 = ID3(str(file_path))
             audio_id3['APIC'] = APIC(encoding=3, mime='image/jpeg', type=3, desc='Cover', data=img_data)
             audio_id3.save()
-    except Exception as e:
-        logger.warning(f"Failed to add metadata: {e}")
+    except:
+        pass
 
     await application.bot.send_audio(
         chat_id=chat_id,
-        audio=open(file_path, "rb"),
+        audio=open(file_path,"rb"),
         title=entry.get("title", song_name),
         performer=entry.get("uploader", "Unknown"),
         reply_markup=post_download_keyboard()
@@ -289,7 +265,7 @@ async def telegram_webhook(request: Request):
         return {"ok": False, "error": str(e)}
 
 @app.get("/")
-async def root(): 
+async def root():
     state = json.loads(COOKIE_STATE.read_text())
     return {"status":"iMusic Beta running 🎵", "cookie_index": state.get("index",0)}
 
