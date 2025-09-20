@@ -9,6 +9,8 @@ from mutagen.id3 import ID3, APIC
 import datetime
 import logging
 from contextlib import asynccontextmanager
+import subprocess
+import sys
 
 from fastapi import FastAPI, Request
 from telegram import (
@@ -118,7 +120,6 @@ async def lifespan(app: FastAPI):
     await application.initialize()
     await application.start()
 
-    # Set bot commands
     async def set_commands(app):
         commands = [
             BotCommand("start", "Start the bot & choose language"),
@@ -127,11 +128,8 @@ async def lifespan(app: FastAPI):
         ]
         await app.bot.set_my_commands(commands)
     asyncio.create_task(set_commands(application))
-
-    # Start 30-minute periodic song prompt
     asyncio.create_task(song_reminder())
 
-    # Webhook setup
     try:
         await application.bot.set_webhook(WEBHOOK_URL)
         print(f"✅ Webhook set to {WEBHOOK_URL}")
@@ -147,7 +145,7 @@ app = FastAPI(lifespan=lifespan)
 # ---------------- REMINDER ----------------
 async def song_reminder():
     while True:
-        await asyncio.sleep(1800)  # 30 minutes
+        await asyncio.sleep(1800)
         for uid, data in load_users().items():
             try:
                 msg = await application.bot.send_message(
@@ -200,14 +198,12 @@ async def search_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     register_user(user.id, user.first_name)
     pref = get_user_pref(user.id)
-    lang = pref.get("language", "en")
-
     song_name = update.message.text.strip()
     status_msg = await update.message.reply_text("Downloading 🎵")
 
-    # Cookie rotation
     cookie_file = get_current_cookie()
     attempt = 0
+
     while attempt < 3:
         try:
             ydl_opts = {
@@ -225,10 +221,22 @@ async def search_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
             info = await asyncio.to_thread(download)
             entry = info["entries"][0]
             break
-        except Exception as e:
-            logger.error(f"Download error attempt {attempt+1}: {e}")
+        except yt_dlp.DownloadError as e:
+            if "Signature extraction failed" in str(e):
+                try:
+                    await status_msg.edit_text("⚠️ yt-dlp outdated, updating...")
+                    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"])
+                    await status_msg.edit_text("✅ yt-dlp updated, retrying download...")
+                    continue
+                except Exception as update_error:
+                    await status_msg.edit_text(f"❌ Could not update yt-dlp: {update_error}")
+                    return
             attempt += 1
             cookie_file = rotate_cookie()
+        except Exception as e:
+            attempt += 1
+            cookie_file = rotate_cookie()
+            logger.error(f"Download error attempt {attempt}: {e}")
     else:
         await status_msg.edit_text("❌ Could not fetch the song after rotating cookies.")
         return
@@ -238,7 +246,6 @@ async def search_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text("❌ Download failed.")
         return
 
-    # Metadata & album art
     try:
         audio = EasyID3(str(file_path))
         audio["title"] = entry.get("title", song_name)

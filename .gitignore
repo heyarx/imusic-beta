@@ -1,22 +1,35 @@
+# Python cache & compiled files
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
 *.so
 
+# Virtual environments
 .venv/
 env/
 venv/
 
+# Bot media & cache
 downloads/
 cache/
 users.json
 
+# Logs and temporary files
 *.log
 *.tmp
 
+# OS files
 .DS_Store
 Thumbs.db
 favicon.ico
 
+# Cookies
 cookies/*.txt
+
+# Environment / secret files
+.env
+
+# Editor settings (optional)
+.vscode/
+.idea/
