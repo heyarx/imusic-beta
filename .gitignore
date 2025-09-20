@@ -1,4 +1,4 @@
-# Python cache
+# Python bytecode / cache
 __pycache__/
 *.py[cod]
 *.pyo
@@ -10,21 +10,19 @@ __pycache__/
 env/
 venv/
 
-# Downloads and cache
+# Downloads & cookies
 downloads/
 cache/
-
-# Users data
+cookies.txt
 users.json
 
-# Logs and temporary files
+# Logs & temporary files
 *.log
 *.tmp
 
-# OS system files
+# System files
 .DS_Store
 Thumbs.db
-favicon.ico
 
-# Cookies folder
-cookies.txt
+# Favicon
+favicon.ico
