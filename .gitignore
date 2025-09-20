@@ -13,16 +13,18 @@ venv/
 # Downloads and cache
 downloads/
 cache/
+
+# Users data
 users.json
 
-# Logs and temp files
+# Logs and temporary files
 *.log
 *.tmp
 
-# OS files
+# OS system files
 .DS_Store
 Thumbs.db
 favicon.ico
 
-# Cookies
+# Cookies folder
 cookies.txt
