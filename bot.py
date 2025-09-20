@@ -9,9 +9,11 @@ from mutagen.id3 import ID3, APIC
 import datetime
 
 from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse
 from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, ChatAction
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 )
+from telegram.constants import ChatAction
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, ContextTypes,
     MessageHandler, filters
@@ -25,8 +27,6 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://imusic-beta.onrender.com/webhook")
 YT_COOKIES = os.getenv("YT_COOKIES_FILE", "cookies.txt")
-MAINTENANCE_MODE = os.getenv("MAINTENANCE_MODE", "false").lower() == "true"
-
 DOWNLOAD_DIR = Path("downloads")
 CACHE_DIR = Path("cache")
 USERS_FILE = Path("users.json")
@@ -131,10 +131,6 @@ async def song_reminder():
 
 # ---------------- HANDLERS ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if MAINTENANCE_MODE:
-        await update.message.reply_text("⚠️ iMusic Beta is currently under maintenance. Please try again later.")
-        return
-
     user = update.effective_user
     register_user(user.id, user.first_name)
     now = datetime.datetime.now().hour
@@ -148,10 +144,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: pass
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if MAINTENANCE_MODE:
-        await update.callback_query.message.reply_text("⚠️ iMusic Beta is currently under maintenance.")
-        return
-
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -160,6 +152,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("lang_"):
         code = data.split("_")[1]
         set_user_language(user_id, code)
+        # Immediately ask for song
         await query.edit_message_text(
             f"✅ Language set to *{LANGUAGES.get(code,'English')}*.\n🎵 Please send the song name you want to listen to:",
             parse_mode="Markdown"
@@ -173,10 +166,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------------- SONG SEARCH ----------------
 async def search_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if MAINTENANCE_MODE:
-        await update.message.reply_text("⚠️ iMusic Beta is currently under maintenance. Please try again later.")
-        return
-
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
     pref = get_user_pref(user_id)
@@ -188,19 +177,7 @@ async def search_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     song_name = update.message.text.strip()
-
-    # ---------------- Typing + Emoji Animation ----------------
     status_msg = await update.message.reply_text("Downloading 🎵")
-    async def animate_typing():
-        emojis = ["🎵","🎶","🎧","🔊"]
-        while not download_complete.is_set():
-            for e in emojis:
-                try: await status_msg.edit_text(f"Downloading {e}")
-                except: pass
-                await asyncio.sleep(0.5)
-    download_complete = asyncio.Event()
-    typing_task = asyncio.create_task(animate_typing())
-    await application.bot.send_chat_action(chat_id, ChatAction.TYPING)
 
     try:
         ydl_opts = {
@@ -218,7 +195,12 @@ async def search_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         info = await asyncio.to_thread(download)
         entry = info["entries"][0]
+
+        # Actual file path
         file_path = CACHE_DIR / f"{entry['title']}.mp3"
+        if not file_path.exists():
+            await status_msg.edit_text("❌ Download failed.")
+            return
 
         # Metadata & album art
         try:
@@ -240,14 +222,12 @@ async def search_song(update: Update, context: ContextTypes.DEFAULT_TYPE):
             performer=entry.get("uploader", "Unknown"),
             reply_markup=post_download_keyboard()
         )
+        try: await status_msg.delete()
+        except: pass
+
     except Exception as e:
         logger.exception("Download error")
         await status_msg.edit_text("❌ Could not fetch the song.")
-    finally:
-        download_complete.set()
-        try: await status_msg.delete()
-        except: pass
-        typing_task.cancel()
 
 # ---------------- WEBHOOK ----------------
 @app.post("/webhook")
@@ -262,7 +242,7 @@ async def telegram_webhook(request: Request):
         return {"ok": False, "error": str(e)}
 
 @app.get("/")
-async def root(): return {"status":"iMusic Beta running 🎵", "maintenance": MAINTENANCE_MODE}
+async def root(): return {"status":"iMusic Beta running 🎵"}
 
 # ---------------- ADD HANDLERS ----------------
 application.add_handler(CommandHandler("start", start))
