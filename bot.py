@@ -132,11 +132,17 @@ async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'outtmpl': 'song.%(ext)s',
             'cookiefile': COOKIES_FILE,
             'noplaylist': True,
-            'quiet': True
+            'quiet': True,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(f"ytsearch:{query_text}", download=True)['entries'][0]
             file_name = ydl.prepare_filename(info)
+            file_name = os.path.splitext(file_name)[0] + ".mp3"
 
         # Metadata
         title = info.get("title", "Unknown Title")
@@ -194,6 +200,11 @@ async def telegram_webhook(request: Request):
     update = Update.de_json(data, application.bot)
     await application.process_update(update)
     return PlainTextResponse("ok")
+
+# Optional GET handler to avoid 405
+@app.get("/webhook")
+async def webhook_get():
+    return PlainTextResponse("⚠️ This endpoint accepts POST only for Telegram updates.")
 
 @app.get("/")
 async def home():
