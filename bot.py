@@ -1,78 +1,132 @@
 import os
 import asyncio
-from pathlib import Path
+import json
 import yt_dlp
 from mutagen.easyid3 import EasyID3
-from mutagen.id3 import ID3, APIC
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup
-)
+from fastapi.responses import PlainTextResponse
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ChatAction
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
-    filters, ContextTypes
+    Application, CommandHandler, MessageHandler, filters,
+    ContextTypes, CallbackQueryHandler
 )
 
-# === Environment variables ===
+# === ENV Variables ===
 TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://imusic-beta.onrender.com/webhook")
 COOKIES_FILE = os.getenv("YT_COOKIES_FILE", "cookies.txt")
+USER_LANG_FILE = "user_lang.json"
 
+# === FastAPI App ===
 app = FastAPI()
+
+# === Telegram App ===
 application = Application.builder().token(TOKEN).build()
 
-# store last bot message id per chat for deleting old messages
-last_message_ids = {}
+# Store last bot messages per chat for deletion
+last_messages = {}
+active_chats = set()  # for 30-min reminders
 
+# --- Load/Save user languages ---
+if os.path.exists(USER_LANG_FILE):
+    with open(USER_LANG_FILE, "r") as f:
+        user_languages = json.load(f)
+else:
+    user_languages = {}
+
+def save_user_languages():
+    with open(USER_LANG_FILE, "w") as f:
+        json.dump(user_languages, f)
+
+# --- Helper to delete previous bot messages ---
 async def delete_last(chat_id, context: ContextTypes.DEFAULT_TYPE):
-    if chat_id in last_message_ids:
+    if chat_id in last_messages:
         try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=last_message_ids[chat_id])
+            await context.bot.delete_message(chat_id, last_messages[chat_id])
         except:
             pass
 
-# === Commands ===
+# --- Language buttons ---
+LANG_BUTTONS = [
+    [InlineKeyboardButton("English 🇬🇧", callback_data="lang_en"),
+     InlineKeyboardButton("Bangla 🇧🇩", callback_data="lang_bn")],
+    [InlineKeyboardButton("Hindi 🇮🇳", callback_data="lang_hi"),
+     InlineKeyboardButton("Other 🌍", callback_data="lang_other")]
+]
+
+# --- Commands ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user.first_name
-    await delete_last(update.effective_chat.id, context)
-    msg = await update.message.reply_text(
-        f"👋 Welcome *{user}*!\n\n🎵 Which song would you like to listen to?",
-        parse_mode="Markdown"
-    )
-    last_message_ids[update.effective_chat.id] = msg.message_id
+    chat_id = update.effective_chat.id
+    active_chats.add(chat_id)
+    await delete_last(chat_id, context)
+    
+    # Skip language selection if already selected
+    if str(chat_id) in user_languages:
+        msg = await update.message.reply_text("👋 Welcome back! Send a song name to get started 🎵")
+    else:
+        msg = await update.message.reply_text(
+            "👋 Welcome! Choose your language:",
+            reply_markup=InlineKeyboardMarkup(LANG_BUTTONS)
+        )
+    last_messages[chat_id] = msg.message_id
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_last(update.effective_chat.id, context)
+    chat_id = update.effective_chat.id
+    active_chats.add(chat_id)
+    await delete_last(chat_id, context)
     msg = await update.message.reply_text(
-        "ℹ️ *Help*\n\nSend a song name or artist to get the track instantly.",
+        "ℹ️ *Help*\nSend a song name/artist to get it instantly 🎧",
         parse_mode="Markdown"
     )
-    last_message_ids[update.effective_chat.id] = msg.message_id
+    last_messages[chat_id] = msg.message_id
 
 async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_last(update.effective_chat.id, context)
+    chat_id = update.effective_chat.id
+    await delete_last(chat_id, context)
     msg = await update.message.reply_text(
-        "🎵 *iMusic Beta Bot*\n\nCreated by @hey_arnab02",
+        "🎵 *iMusic Beta Bot*\nCreated by @hey_arnab02",
         parse_mode="Markdown"
     )
-    last_message_ids[update.effective_chat.id] = msg.message_id
+    last_messages[chat_id] = msg.message_id
 
-# === Song handler ===
-async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.message.text
+# --- CallbackQuery for language selection ---
+async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chat_id = str(query.from_user.id)
+    user_languages[chat_id] = query.data
+    save_user_languages()
+    await query.edit_message_text(f"🌐 Language set to {query.data.split('_')[1].upper()}\n\nSend a song name to continue:")
+
+# --- Command to change language anytime ---
+async def change_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    await delete_last(chat_id, context)
+    msg = await update.message.reply_text(
+        "🌐 Select your new language:",
+        reply_markup=InlineKeyboardMarkup(LANG_BUTTONS)
+    )
+    last_messages[chat_id] = msg.message_id
 
-    # Delete previous bot message
+# --- Song Handler ---
+async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    active_chats.add(chat_id)
     await delete_last(chat_id, context)
 
-    # Show typing action
-    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+    query_text = update.message.text
 
-    # Temporary “downloading” message
-    dl_msg = await update.message.reply_text("⬇️ Downloading your song… Please wait 🎶")
-    last_message_ids[chat_id] = dl_msg.message_id
+    # Typing + downloading
+    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+    dl_msg = await update.message.reply_text("⬇️ Downloading your song… 🎶")
+    last_messages[chat_id] = dl_msg.message_id
+
+    if not os.path.exists(COOKIES_FILE):
+        await context.bot.delete_message(chat_id=chat_id, message_id=dl_msg.message_id)
+        msg = await update.message.reply_text("⚠️ Bot Under Maintenance")
+        last_messages[chat_id] = msg.message_id
+        return
 
     try:
         ydl_opts = {
@@ -83,7 +137,7 @@ async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'quiet': True
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f"ytsearch:{query}", download=True)['entries'][0]
+            info = ydl.extract_info(f"ytsearch:{query_text}", download=True)['entries'][0]
             file_name = ydl.prepare_filename(info)
 
         # Metadata
@@ -91,7 +145,7 @@ async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         artist = info.get("artist") or info.get("uploader") or "Unknown Artist"
         album = info.get("album") or "Unknown Album"
 
-        # Tag metadata
+        # Tag mp3
         try:
             audio = EasyID3(file_name)
         except:
@@ -101,7 +155,6 @@ async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         audio['album'] = album
         audio.save(file_name)
 
-        # Delete “downloading” message
         await context.bot.delete_message(chat_id=chat_id, message_id=dl_msg.message_id)
 
         # Send audio
@@ -113,36 +166,58 @@ async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
-        # After sending, show enjoy message
-        enjoy_msg = await context.bot.send_message(chat_id=chat_id, text="Enjoy your song 🎧")
-        last_message_ids[chat_id] = enjoy_msg.message_id
+        enjoy_msg = await context.bot.send_message(chat_id=chat_id, text="🎧 Enjoy your song!")
+        last_messages[chat_id] = enjoy_msg.message_id
 
         os.remove(file_name)
-    except Exception as e:
-        # Show under maintenance if cookies fail or any error
-        await context.bot.delete_message(chat_id=chat_id, message_id=dl_msg.message_id)
-        msg = await context.bot.send_message(chat_id=chat_id, text="⚠️ Bot Under Maintenance")
-        last_message_ids[chat_id] = msg.message_id
 
-# === Register handlers ===
+    except Exception as e:
+        await context.bot.delete_message(chat_id=chat_id, message_id=dl_msg.message_id)
+        msg = await update.message.reply_text("⚠️ Bot Under Maintenance")
+        last_messages[chat_id] = msg.message_id
+
+# --- Automatic 30-min reminder ---
+async def periodic_reminder():
+    while True:
+        await asyncio.sleep(1800)  # 30 minutes
+        for chat_id in list(active_chats):
+            try:
+                await application.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                await asyncio.sleep(1)
+                msg = await application.bot.send_message(chat_id=chat_id, text="🎵 Which song would you like to listen?")
+                last_messages[chat_id] = msg.message_id
+            except:
+                active_chats.discard(chat_id)
+
+# --- Register handlers ---
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("help", help_command))
 application.add_handler(CommandHandler("about", about_command))
+application.add_handler(CommandHandler("language", change_language))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, song_handler))
+application.add_handler(CallbackQueryHandler(language_callback, pattern="lang_"))
 
-# === FastAPI webhook ===
+# --- FastAPI webhook ---
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
     data = await request.json()
     update = Update.de_json(data, application.bot)
+    if not application.is_initialized:
+        await application.initialize()
+        await application.start()
+        asyncio.create_task(periodic_reminder())
     await application.process_update(update)
-    return {"ok": True}
+    return PlainTextResponse("ok")
 
 @app.get("/")
 async def home():
     return {"status": "ok"}
 
-# === Startup to set webhook ===
+# --- Startup: set webhook ---
 @app.on_event("startup")
 async def startup_event():
+    if not application.is_initialized:
+        await application.initialize()
+        await application.start()
+        asyncio.create_task(periodic_reminder())
     await application.bot.set_webhook(WEBHOOK_URL)
