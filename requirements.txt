@@ -1,0 +1,15 @@
+# Telegram bot
+python-telegram-bot==20.5
+
+# Web framework
+fastapi>=0.109.2
+uvicorn>=0.23.2
+
+# YouTube downloader
+yt-dlp>=2025.8.1
+
+# Audio metadata
+mutagen>=1.46.0
+
+# HTTP requests
+requests>=2.31.0
