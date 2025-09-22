@@ -160,12 +160,14 @@ async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await context.bot.delete_message(chat_id=chat_id, message_id=dl_msg.message_id)
 
-        caption = f"🎶 *{title}*\n👤 {artist}\n💿 {album}"
-        await context.bot.send_audio(chat_id=chat_id, audio=open(file_name, 'rb'), caption=caption, parse_mode="Markdown")
-        enjoy_msg = await context.bot.send_message(chat_id=chat_id, text="🎧 Enjoy your song!")
-        last_messages[chat_id] = enjoy_msg.message_id
-
-        os.remove(file_name)
+        if os.path.exists(file_name):
+            caption = f"🎶 *{title}*\n👤 {artist}\n💿 {album}"
+            await context.bot.send_audio(chat_id=chat_id, audio=open(file_name, 'rb'), caption=caption, parse_mode="Markdown")
+            enjoy_msg = await context.bot.send_message(chat_id=chat_id, text="🎧 Enjoy your song!")
+            last_messages[chat_id] = enjoy_msg.message_id
+            os.remove(file_name)
+        else:
+            await update.message.reply_text("⚠️ Failed to process the song. Please try another.")
 
     except Exception as e:
         await context.bot.delete_message(chat_id=chat_id, message_id=dl_msg.message_id)
@@ -201,7 +203,6 @@ async def telegram_webhook(request: Request):
     await application.process_update(update)
     return PlainTextResponse("ok")
 
-# Optional GET handler to avoid 405
 @app.get("/webhook")
 async def webhook_get():
     return PlainTextResponse("⚠️ This endpoint accepts POST only for Telegram updates.")
