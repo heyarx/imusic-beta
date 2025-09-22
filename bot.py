@@ -12,23 +12,23 @@ from telegram.ext import (
     ContextTypes, CallbackQueryHandler
 )
 
-# === ENV Variables ===
+# --- ENV VARIABLES ---
 TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://imusic-beta.onrender.com/webhook")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 COOKIES_FILE = os.getenv("YT_COOKIES_FILE", "cookies.txt")
 USER_LANG_FILE = "user_lang.json"
 
-# === FastAPI App ===
+# --- FastAPI App ---
 app = FastAPI()
 
-# === Telegram App ===
+# --- Telegram App ---
 application = Application.builder().token(TOKEN).build()
 
-# Store last bot messages per chat for deletion
+# --- Globals ---
 last_messages = {}
-active_chats = set()  # for 30-min reminders
+active_chats = set()
 
-# --- Load/Save user languages ---
+# --- Load / Save user languages ---
 if os.path.exists(USER_LANG_FILE):
     with open(USER_LANG_FILE, "r") as f:
         user_languages = json.load(f)
@@ -39,7 +39,7 @@ def save_user_languages():
     with open(USER_LANG_FILE, "w") as f:
         json.dump(user_languages, f)
 
-# --- Helper to delete previous bot messages ---
+# --- Helper to delete last bot message ---
 async def delete_last(chat_id, context: ContextTypes.DEFAULT_TYPE):
     if chat_id in last_messages:
         try:
@@ -61,7 +61,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_chats.add(chat_id)
     await delete_last(chat_id, context)
     
-    # Skip language selection if already selected
     if str(chat_id) in user_languages:
         msg = await update.message.reply_text("👋 Welcome back! Send a song name to get started 🎵")
     else:
@@ -73,7 +72,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    active_chats.add(chat_id)
     await delete_last(chat_id, context)
     msg = await update.message.reply_text(
         "ℹ️ *Help*\nSend a song name/artist to get it instantly 🎧",
@@ -90,7 +88,7 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     last_messages[chat_id] = msg.message_id
 
-# --- CallbackQuery for language selection ---
+# --- Language selection callback ---
 async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -99,7 +97,7 @@ async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_user_languages()
     await query.edit_message_text(f"🌐 Language set to {query.data.split('_')[1].upper()}\n\nSend a song name to continue:")
 
-# --- Command to change language anytime ---
+# --- Change language command ---
 async def change_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await delete_last(chat_id, context)
@@ -109,7 +107,7 @@ async def change_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     last_messages[chat_id] = msg.message_id
 
-# --- Song Handler ---
+# --- Song handler ---
 async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     active_chats.add(chat_id)
@@ -117,7 +115,7 @@ async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query_text = update.message.text
 
-    # Typing + downloading
+    # Typing + downloading message
     await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
     dl_msg = await update.message.reply_text("⬇️ Downloading your song… 🎶")
     last_messages[chat_id] = dl_msg.message_id
@@ -145,7 +143,6 @@ async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         artist = info.get("artist") or info.get("uploader") or "Unknown Artist"
         album = info.get("album") or "Unknown Album"
 
-        # Tag mp3
         try:
             audio = EasyID3(file_name)
         except:
@@ -157,15 +154,8 @@ async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await context.bot.delete_message(chat_id=chat_id, message_id=dl_msg.message_id)
 
-        # Send audio
         caption = f"🎶 *{title}*\n👤 {artist}\n💿 {album}"
-        sent = await context.bot.send_audio(
-            chat_id=chat_id,
-            audio=open(file_name, 'rb'),
-            caption=caption,
-            parse_mode="Markdown"
-        )
-
+        await context.bot.send_audio(chat_id=chat_id, audio=open(file_name, 'rb'), caption=caption, parse_mode="Markdown")
         enjoy_msg = await context.bot.send_message(chat_id=chat_id, text="🎧 Enjoy your song!")
         last_messages[chat_id] = enjoy_msg.message_id
 
@@ -176,10 +166,10 @@ async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await update.message.reply_text("⚠️ Bot Under Maintenance")
         last_messages[chat_id] = msg.message_id
 
-# --- Automatic 30-min reminder ---
+# --- 30-min periodic reminder ---
 async def periodic_reminder():
     while True:
-        await asyncio.sleep(1800)  # 30 minutes
+        await asyncio.sleep(1800)
         for chat_id in list(active_chats):
             try:
                 await application.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
@@ -202,10 +192,6 @@ application.add_handler(CallbackQueryHandler(language_callback, pattern="lang_")
 async def telegram_webhook(request: Request):
     data = await request.json()
     update = Update.de_json(data, application.bot)
-    if not application.is_initialized:
-        await application.initialize()
-        await application.start()
-        asyncio.create_task(periodic_reminder())
     await application.process_update(update)
     return PlainTextResponse("ok")
 
@@ -213,11 +199,10 @@ async def telegram_webhook(request: Request):
 async def home():
     return {"status": "ok"}
 
-# --- Startup: set webhook ---
+# --- Startup event ---
 @app.on_event("startup")
 async def startup_event():
-    if not application.is_initialized:
-        await application.initialize()
-        await application.start()
-        asyncio.create_task(periodic_reminder())
+    await application.initialize()
+    await application.start()
     await application.bot.set_webhook(WEBHOOK_URL)
+    asyncio.create_task(periodic_reminder())
