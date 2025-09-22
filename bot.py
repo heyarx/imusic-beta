@@ -25,9 +25,9 @@ app = FastAPI()
 application = Application.builder().token(TOKEN).build()
 
 # --- Globals ---
-last_messages = {}       # Stores last bot message per chat
-active_chats = set()     # For periodic reminders
-last_song_sent = {}      # Prevent duplicate song sending per chat
+last_messages = {}       # Stores all bot message IDs per chat
+active_chats = set()     # For reminders
+last_song_sent = {}      # Prevent duplicate song sending
 
 # --- Load / Save user languages ---
 if os.path.exists(USER_LANG_FILE):
@@ -40,15 +40,16 @@ def save_user_languages():
     with open(USER_LANG_FILE, "w") as f:
         json.dump(user_languages, f)
 
-# --- Helper to delete all previous bot messages except song ---
-async def clear_previous_messages(chat_id, context: ContextTypes.DEFAULT_TYPE):
-    if chat_id in last_messages:
-        for msg_id in last_messages[chat_id]:
+# --- Helper to delete all bot messages in chat except song ---
+async def clear_previous_bot_messages(chat_id, context: ContextTypes.DEFAULT_TYPE, keep_messages=[]):
+    """Delete all messages stored in last_messages except IDs in keep_messages."""
+    for msg_id in last_messages.get(chat_id, []):
+        if msg_id not in keep_messages:
             try:
                 await context.bot.delete_message(chat_id, msg_id)
             except:
                 pass
-    last_messages[chat_id] = []
+    last_messages[chat_id] = [msg_id for msg_id in last_messages.get(chat_id, []) if msg_id in keep_messages]
 
 # --- Language buttons ---
 LANG_BUTTONS = [
@@ -62,7 +63,7 @@ LANG_BUTTONS = [
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     active_chats.add(chat_id)
-    await clear_previous_messages(chat_id, context)
+    await clear_previous_bot_messages(chat_id, context)
 
     if str(chat_id) in user_languages:
         msg = await update.message.reply_text("👋 Welcome back! Send a song name to get started 🎵")
@@ -75,7 +76,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    await clear_previous_messages(chat_id, context)
+    await clear_previous_bot_messages(chat_id, context)
     msg = await update.message.reply_text(
         "ℹ️ *Help*\nSend a song name or artist, and I will provide the playable audio instantly 🎧",
         parse_mode="Markdown"
@@ -84,7 +85,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    await clear_previous_messages(chat_id, context)
+    await clear_previous_bot_messages(chat_id, context)
     msg = await update.message.reply_text(
         "🎵 *iMusic Beta Bot*\nCreated by @hey_arnab02",
         parse_mode="Markdown"
@@ -103,7 +104,7 @@ async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Change language command ---
 async def change_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    await clear_previous_messages(chat_id, context)
+    await clear_previous_bot_messages(chat_id, context)
     msg = await update.message.reply_text(
         "🌐 Select your new language:",
         reply_markup=InlineKeyboardMarkup(LANG_BUTTONS)
@@ -116,20 +117,23 @@ async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query_text = update.message.text.strip()
     active_chats.add(chat_id)
 
-    # Prevent sending duplicate songs
+    # Prevent duplicate song requests
     if last_song_sent.get(chat_id) == query_text:
-        await update.message.reply_text("⚡ You already requested this song! Please try a new one.")
+        msg = await update.message.reply_text("⚡ You already requested this song! Please try a new one.")
+        last_messages.setdefault(chat_id, []).append(msg.message_id)
         return
     last_song_sent[chat_id] = query_text
 
-    await clear_previous_messages(chat_id, context)
+    # Delete all previous bot messages except the song
+    await clear_previous_bot_messages(chat_id, context)
 
-    # Typing + downloading professional style
+    # Typing + professional downloading message
     typing_msg = await update.message.reply_text("🎶 Processing your request… Please wait ⏳")
     last_messages.setdefault(chat_id, []).append(typing_msg.message_id)
 
     if not os.path.exists(COOKIES_FILE):
-        await update.message.reply_text("⚠️ Bot Under Maintenance")
+        msg = await update.message.reply_text("⚠️ Bot Under Maintenance")
+        last_messages.setdefault(chat_id, []).append(msg.message_id)
         return
 
     try:
@@ -164,20 +168,16 @@ async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         audio['album'] = album
         audio.save(file_name)
 
-        # Delete typing message
-        for msg_id in last_messages.get(chat_id, []):
-            try:
-                await context.bot.delete_message(chat_id, msg_id)
-            except:
-                pass
-        last_messages[chat_id] = []
+        # Delete typing message only
+        await clear_previous_bot_messages(chat_id, context, keep_messages=[])
 
-        # Send the MP3
+        # Send the song
         if os.path.exists(file_name):
             caption = f"🎶 *{title}*\n👤 {artist}\n💿 {album}"
             song_msg = await context.bot.send_audio(chat_id=chat_id, audio=open(file_name, 'rb'), caption=caption, parse_mode="Markdown")
             enjoy_msg = await context.bot.send_message(chat_id=chat_id, text="🎧 Enjoy your song!")
-            last_messages[chat_id].extend([song_msg.message_id, enjoy_msg.message_id])
+            # Keep only song + enjoy message
+            last_messages[chat_id] = [song_msg.message_id, enjoy_msg.message_id]
             os.remove(file_name)
         else:
             msg = await update.message.reply_text("⚠️ Failed to process the song. Please try another.")
