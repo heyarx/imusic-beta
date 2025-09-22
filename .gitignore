@@ -20,12 +20,16 @@ Thumbs.db
 *.log
 
 # yt-dlp downloads
-*.webm
+song.*
 *.mp3
+*.webm
 *.m4a
 *.aac
 *.ogg
 *.opus
+
+# Cookies & credentials
+cookies.txt
 
 # Render & deployment
 *.cache/
