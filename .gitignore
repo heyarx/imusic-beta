@@ -1,23 +1,21 @@
-# Python
+# Python cache
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
-*.env
-*.sqlite3
-*.log
 
-# Virtual Environment
+# Virtual Environments
 venv/
 .env/
 .venv/
 
+# SQLite DB & Logs
+*.sqlite3
+*.log
+
 # OS Files
 .DS_Store
 Thumbs.db
-
-# Logs
-*.log
 
 # yt-dlp downloads
 song.*
@@ -30,6 +28,7 @@ song.*
 
 # Cookies & credentials
 cookies.txt
+user_lang.json
 
-# Render & deployment
+# Render & deployment cache
 *.cache/
