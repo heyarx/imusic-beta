@@ -193,10 +193,10 @@ async def song_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await update.message.reply_text("⚠️ Bot Under Maintenance")
         last_bot_messages[chat_id].append(msg.message_id)
 
-# --- 30-min periodic reminder ---
+# --- 60-min periodic reminder ---
 async def periodic_reminder():
     while True:
-        await asyncio.sleep(1800)
+        await asyncio.sleep(3600)  # 60 minutes
         for chat_id in list(active_chats):
             try:
                 await application.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
